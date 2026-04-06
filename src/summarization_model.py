@@ -5,12 +5,12 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 # ---------------------------
-# Text Cleaning
+# Text Cleaning (local)
 # ---------------------------
 def clean_text(text):
     text = str(text).lower()
-    text = re.sub(r'http\S+|www\S+', '', text)   # remove URLs
-    text = re.sub(r'[^a-zA-Z. ]', '', text)      # keep letters + dots
+    text = re.sub(r'http\S+|www\S+', '', text)
+    text = re.sub(r'[^a-zA-Z. ]', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -20,17 +20,20 @@ def clean_text(text):
 # ---------------------------
 def train_summarizer():
     df = pd.read_csv("Data/Summ/train.csv")
-    df = df.dropna()
+
+    # Keep only needed columns
+    df = df[['article', 'highlights']].dropna()
 
     # Clean articles
-    df['article'] = df['article'].apply(clean_text)
+    df['article'] = df['article'].astype(str).apply(clean_text)
 
     # Train TF-IDF
     vectorizer = TfidfVectorizer(stop_words='english')
     vectorizer.fit(df['article'])
 
-    # Save
-    pickle.dump(vectorizer, open("models/summarization/vectorizer.pkl", "wb"))
+    # Save vectorizer
+    with open("models/summarization/vectorizer.pkl", "wb") as f:
+        pickle.dump(vectorizer, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     print("✅ Summarization vectorizer trained and saved!")
 
@@ -40,32 +43,32 @@ def train_summarizer():
 # ---------------------------
 def summarize_text(text, vectorizer, num_sentences=2):
 
-    # Split into sentences
     sentences = text.split('.')
 
-    # Clean sentences
-    cleaned_sentences = [clean_text(s) for s in sentences if s.strip() != ""]
+    cleaned_sentences = [
+        clean_text(s) for s in sentences if s.strip() != ""
+    ]
 
     if len(cleaned_sentences) == 0:
         return "No content to summarize."
 
-    # Convert to vectors
+    # Vectorize
     X = vectorizer.transform(cleaned_sentences)
 
     # Score sentences
-    scores = X.sum(axis=1).A1   # convert matrix to array
+    scores = X.sum(axis=1).A1
 
     # Rank sentences
     ranked = np.argsort(scores)[::-1]
 
     # Select top sentences
-    selected_sentences = [sentences[i] for i in ranked[:num_sentences]]
+    selected = [sentences[i].strip() for i in ranked[:num_sentences]]
 
-    return '. '.join(selected_sentences).strip()
+    return '. '.join(selected)
 
 
 # ---------------------------
-# Run training manually
+# Run Training
 # ---------------------------
 if __name__ == "__main__":
     train_summarizer()
