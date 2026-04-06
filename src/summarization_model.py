@@ -1,55 +1,71 @@
-from transformers import BartTokenizer, BartForConditionalGeneration
-import torch
-from preprocessing import load_summarization_data
+import pandas as pd
+import pickle
+import re
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+# ---------------------------
+# Text Cleaning
+# ---------------------------
+def clean_text(text):
+    text = str(text).lower()
+    text = re.sub(r'http\S+|www\S+', '', text)   # remove URLs
+    text = re.sub(r'[^a-zA-Z. ]', '', text)      # keep letters + dots
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
 
 
-_, _, test_df = load_summarization_data(
-    "Data/Summ/train.csv",
-    "Data/Summ/validation.csv",
-    "Data/Summ/test.csv"
-)
+# ---------------------------
+# Train Vectorizer
+# ---------------------------
+def train_summarizer():
+    df = pd.read_csv("Data/Summ/train.csv")
+    df = df.dropna()
+
+    # Clean articles
+    df['article'] = df['article'].apply(clean_text)
+
+    # Train TF-IDF
+    vectorizer = TfidfVectorizer(stop_words='english')
+    vectorizer.fit(df['article'])
+
+    # Save
+    pickle.dump(vectorizer, open("models/summarization/vectorizer.pkl", "wb"))
+
+    print("✅ Summarization vectorizer trained and saved!")
 
 
-test_df = test_df.dropna(subset=["clean_article"])
-test_df["clean_article"] = test_df["clean_article"].astype(str)
+# ---------------------------
+# Summarization Function
+# ---------------------------
+def summarize_text(text, vectorizer, num_sentences=2):
 
-print("Test samples:", len(test_df))
+    # Split into sentences
+    sentences = text.split('.')
 
+    # Clean sentences
+    cleaned_sentences = [clean_text(s) for s in sentences if s.strip() != ""]
 
-model_name = "facebook/bart-large-cnn"
+    if len(cleaned_sentences) == 0:
+        return "No content to summarize."
 
-tokenizer = BartTokenizer.from_pretrained(model_name)
-model = BartForConditionalGeneration.from_pretrained(model_name)
+    # Convert to vectors
+    X = vectorizer.transform(cleaned_sentences)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model.to(device)
-model.eval()
+    # Score sentences
+    scores = X.sum(axis=1).A1   # convert matrix to array
 
-def summarize_article(text, max_input=256, max_output=64):
-    inputs = tokenizer(
-        text,
-        return_tensors="pt",
-        truncation=True,
-        padding=True,
-        max_length=max_input
-    ).to(device)
+    # Rank sentences
+    ranked = np.argsort(scores)[::-1]
 
-    with torch.no_grad():
-        summary_ids = model.generate(
-            inputs["input_ids"],
-            attention_mask=inputs["attention_mask"],
-            max_length=max_output,
-            num_beams=4,
-            early_stopping=True
-        )
+    # Select top sentences
+    selected_sentences = [sentences[i] for i in ranked[:num_sentences]]
 
-    return tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+    return '. '.join(selected_sentences).strip()
 
 
-for i in range(3):  # summarize first 3 articles
-    print(f"\nArticle {i+1}")
-    print(test_df.iloc[i]["clean_article"][:500], "...")
-
-    summary = summarize_article(test_df.iloc[i]["clean_article"])
-    print("\nSummary:")
-    print(summary)
+# ---------------------------
+# Run training manually
+# ---------------------------
+if __name__ == "__main__":
+    train_summarizer()

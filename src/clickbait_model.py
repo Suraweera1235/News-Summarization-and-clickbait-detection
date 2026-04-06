@@ -1,56 +1,97 @@
+import pandas as pd
+import pickle
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
-import joblib
-from preprocessing import load_clickbait_data
-import pandas as pd
-import numpy as np
-import os
+from preprocessing import clean_text
 
+# ---------------------------
+# Load datasets
+# ---------------------------
+df1 = pd.read_csv("Data/Clickbait/train1.csv")
+df2 = pd.read_csv("Data/Clickbait/train2.csv")
 
-clickbait_paths = ["Data/Clickbait/train1.csv", "Data/Clickbait/train2.csv"]
+# Combine
+df = pd.concat([df1, df2], ignore_index=True)
 
+# ---------------------------
+# CLEAN DATA (IMPORTANT)
+# ---------------------------
+df = df.dropna(subset=['label', 'title'])
 
-clickbait_df = load_clickbait_data(clickbait_paths)
+# Clean labels properly
+df['label'] = df['label'].astype(str)
+df['label'] = df['label'].str.strip().str.lower()
 
+print("🔍 Cleaned labels:")
+print(df['label'].value_counts())
 
-print("Columns in DataFrame:", clickbait_df.columns)
-print("Any NaNs in headlines?", clickbait_df['clean_headline'].isnull().sum())
-print("Any NaNs in labels?", clickbait_df['label'].isnull().sum())
+# Convert labels safely
+df['label'] = df['label'].replace({
+    'clickbait': 1,
+    'news': 0
+})
 
+# Remove anything unexpected
+df = df[df['label'].isin([0, 1])]
 
-# Fill missing headlines with empty strings
-clickbait_df['clean_headline'] = clickbait_df['clean_headline'].fillna('')
+print("\n✅ After mapping:")
+print(df['label'].value_counts())
 
-# Drop rows with missing labels
-clickbait_df = clickbait_df.dropna(subset=['label'])
+print("\n📊 Final dataset size:", len(df))
 
-# Map string labels to integers
-label_mapping = {'news': 0, 'clickbait': 1}
-clickbait_df['label'] = clickbait_df['label'].map(label_mapping)
+# ---------------------------
+# Clean text
+# ---------------------------
+df['title'] = df['title'].apply(clean_text)
 
-# Drop rows that didn’t match the mapping
-clickbait_df = clickbait_df.dropna(subset=['label'])
-clickbait_df['label'] = clickbait_df['label'].astype(int)
+# ---------------------------
+# Features
+# ---------------------------
+X = df['title']
+y = df['label']
 
+# ---------------------------
+# Train-test split
+# ---------------------------
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
 
-X = clickbait_df['clean_headline']
-y = clickbait_df['label']
+# ---------------------------
+# Vectorization
+# ---------------------------
+vectorizer = TfidfVectorizer(
+    max_features=5000,
+    stop_words='english'
+)
 
+X_train_vec = vectorizer.fit_transform(X_train)
+X_test_vec = vectorizer.transform(X_test)
 
-vectorizer = TfidfVectorizer(max_features=5000)
-X_tfidf = vectorizer.fit_transform(X)
+# ---------------------------
+# Model (balanced!)
+# ---------------------------
+model = LogisticRegression(
+    class_weight='balanced',
+    max_iter=1000
+)
 
+model.fit(X_train_vec, y_train)
 
-model = LogisticRegression(max_iter=1000)
-model.fit(X_tfidf, y)
+# ---------------------------
+# Evaluation
+# ---------------------------
+y_pred = model.predict(X_test_vec)
 
+print("\n📈 Model Performance:")
+print(classification_report(y_test, y_pred))
 
-os.makedirs('models/clickbait', exist_ok=True)
-joblib.dump(model, 'models/clickbait/clickbait_model.pkl')
-joblib.dump(vectorizer, 'models/clickbait/vectorizer.pkl')
+# ---------------------------
+# Save model
+# ---------------------------
+pickle.dump(model, open("models/clickbait/clickbait_model.pkl", "wb"))
+pickle.dump(vectorizer, open("models/clickbait/vectorizer.pkl", "wb"))
 
-
-y_pred = model.predict(X_tfidf)
-print("Clickbait Detection Report (Train Data):")
-print(classification_report(y, y_pred))
+print("\n🎉 Clickbait model trained and saved successfully!")

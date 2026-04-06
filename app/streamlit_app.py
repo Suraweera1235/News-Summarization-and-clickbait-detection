@@ -1,88 +1,69 @@
 import streamlit as st
-import joblib
-import torch
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+import pickle
+from src.preprocessing import clean_text
+from src.summarization_model import summarize_text
+import sys
+import os
 
-# -----------------------------
-# Page config
-# -----------------------------
-st.set_page_config(page_title="News Analyzer", layout="centered")
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# ---------------------------
+# Load Models
+# ---------------------------
+click_model = pickle.load(open("models/clickbait/clickbait_model.pkl", "rb"))
+click_vectorizer = pickle.load(open("models/clickbait/vectorizer.pkl", "rb"))
 
-# -----------------------------
-# Device
-# -----------------------------
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# -----------------------------
-# Load clickbait model (cached)
-# -----------------------------
-@st.cache_resource
-def load_clickbait_model():
-    click_model = joblib.load("models/clickbait/clickbait_model.pkl")
-    vectorizer = joblib.load("models/clickbait/vectorizer.pkl")
-    return click_model, vectorizer
-
-# -----------------------------
-# Load summarization model (cached)
-# -----------------------------
-@st.cache_resource
-def load_summarization_model():
-    model_name = "facebook/bart-large-cnn"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-    model.to(device)
-    model.eval()
-    return tokenizer, model
+sum_vectorizer = pickle.load(open("models/summarization/vectorizer.pkl", "rb"))
 
 
-click_model, vectorizer = load_clickbait_model()
-tokenizer, summ_model = load_summarization_model()
+# ---------------------------
+# Clickbait Prediction
+# ---------------------------
+def predict_clickbait(text):
+    vec = click_vectorizer.transform([text])
+    pred = click_model.predict(vec)[0]
+    prob = click_model.predict_proba(vec)[0]
 
-# -----------------------------
-# UI
-# -----------------------------
-st.title("📰 News Summarization & Clickbait Detection")
+    confidence = max(prob)
 
-text = st.text_area(
-    "Enter News Headline or Article",
-    height=250,
-    placeholder="Paste a news article or headline here..."
-)
-
-# -----------------------------
-# Analyze
-# -----------------------------
-if st.button("Analyze"):
-    if not text.strip():
-        st.warning("Please enter some text.")
+    if pred == 1:
+        return "🚨 Clickbait", confidence
     else:
-        # -------- Clickbait Detection --------
-        tfidf_text = vectorizer.transform([text])
-        click_pred = click_model.predict(tfidf_text)[0]
+        return "📰 Not Clickbait", confidence
 
-        st.subheader("Clickbait Detection")
-        st.write("Prediction:", "🚨 Clickbait" if click_pred == 1 else "✅ Not Clickbait")
 
-        # -------- Summarization --------
-        st.subheader("Summary")
+# ---------------------------
+# Streamlit UI
+# ---------------------------
+st.set_page_config(page_title="News AI System", layout="centered")
 
-        inputs = tokenizer(
-            text,
-            return_tensors="pt",
-            truncation=True,
-            padding=True,
-            max_length=512
-        ).to(device)
+st.title("🧠 News Summarization & Clickbait Detection")
 
-        with torch.no_grad():
-            summary_ids = summ_model.generate(
-                inputs["input_ids"],
-                attention_mask=inputs["attention_mask"],
-                max_length=120,
-                min_length=30,
-                num_beams=2,
-                early_stopping=True
-            )
+user_input = st.text_area("Enter News Article or Headline")
 
-        summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
-        st.success(summary)
+if st.button("Analyze"):
+
+    if user_input.strip() == "":
+        st.warning("⚠️ Please enter some text")
+    else:
+        with st.spinner("Processing..."):
+
+            # Clean input
+            clean_input = clean_text(user_input)
+
+            # ---------------------------
+            # Clickbait Detection
+            # ---------------------------
+            label, confidence = predict_clickbait(clean_input)
+
+            st.subheader("📌 Clickbait Detection")
+            st.write(label)
+            st.progress(float(confidence))
+
+            # ---------------------------
+            # Summarization
+            # ---------------------------
+            st.subheader("🧠 Summary")
+
+            summary = summarize_text(user_input, sum_vectorizer)
+
+            st.write(summary)
