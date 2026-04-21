@@ -4,34 +4,24 @@ from transformers import BartTokenizer, BartForConditionalGeneration
 from preprocessing import load_summarization_data
 from tqdm import tqdm
 
-# -----------------------------
-# Load ROUGE metric
-# -----------------------------
 rouge = evaluate.load("rouge")
 
-# -----------------------------
-# Load dataset
-# -----------------------------
 _, _, test_df = load_summarization_data(
     "Data/Summ/train.csv",
     "Data/Summ/validation.csv",
     "Data/Summ/test.csv"
 )
 
-# Clean data
 test_df = test_df.dropna(subset=["clean_article", "clean_summary"])
 test_df["clean_article"] = test_df["clean_article"].astype(str)
 test_df["clean_summary"] = test_df["clean_summary"].astype(str)
 
-# 🚀 LIMIT samples for fast evaluation
-MAX_SAMPLES = 200   # change to full set only for final run
+
+MAX_SAMPLES = 200   
 test_df = test_df.sample(n=min(MAX_SAMPLES, len(test_df)), random_state=42)
 
 print("Test samples:", len(test_df))
 
-# -----------------------------
-# Load PRETRAINED BART (NO PATH ERRORS)
-# -----------------------------
 MODEL_NAME = "facebook/bart-large-cnn"
 
 tokenizer = BartTokenizer.from_pretrained(MODEL_NAME)
@@ -41,10 +31,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
 model.eval()
 
-# -----------------------------
-# Batch inference (FAST)
-# -----------------------------
-BATCH_SIZE = 8   # increase if GPU allows
+BATCH_SIZE = 8  
 
 articles = test_df["clean_article"].tolist()
 references = test_df["clean_summary"].tolist()
@@ -76,9 +63,7 @@ for i in tqdm(range(0, len(articles), BATCH_SIZE)):
 
     predictions.extend(batch_summaries)
 
-# -----------------------------
-# ROUGE Evaluation
-# -----------------------------
+
 results = rouge.compute(
     predictions=predictions,
     references=references[:len(predictions)]

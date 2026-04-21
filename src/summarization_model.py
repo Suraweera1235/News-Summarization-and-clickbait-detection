@@ -4,9 +4,6 @@ import re
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-# ---------------------------
-# Text Cleaning (local)
-# ---------------------------
 def clean_text(text):
     text = str(text).lower()
     text = re.sub(r'http\S+|www\S+', '', text)
@@ -14,33 +11,25 @@ def clean_text(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-
-# ---------------------------
-# Train Vectorizer
-# ---------------------------
 def train_summarizer():
     df = pd.read_csv("Data/Summ/train.csv")
 
-    # Keep only needed columns
+    
     df = df[['article', 'highlights']].dropna()
 
-    # Clean articles
+   
     df['article'] = df['article'].astype(str).apply(clean_text)
 
-    # Train TF-IDF
+    
     vectorizer = TfidfVectorizer(stop_words='english')
     vectorizer.fit(df['article'])
 
-    # Save vectorizer
     with open("models/summarization/vectorizer.pkl", "wb") as f:
         pickle.dump(vectorizer, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    print("✅ Summarization vectorizer trained and saved!")
+    print("Summarization vectorizer trained and saved!")
 
 
-# ---------------------------
-# Summarization Function
-# ---------------------------
 def summarize_text(text, vectorizer, num_sentences=2):
 
     sentences = text.split('.')
@@ -52,23 +41,15 @@ def summarize_text(text, vectorizer, num_sentences=2):
     if len(cleaned_sentences) == 0:
         return "No content to summarize."
 
-    # Vectorize
     X = vectorizer.transform(cleaned_sentences)
 
-    # Score sentences
     scores = X.sum(axis=1).A1
 
-    # Rank sentences
     ranked = np.argsort(scores)[::-1]
 
-    # Select top sentences
     selected = [sentences[i].strip() for i in ranked[:num_sentences]]
 
     return '. '.join(selected)
 
-
-# ---------------------------
-# Run Training
-# ---------------------------
 if __name__ == "__main__":
     train_summarizer()
