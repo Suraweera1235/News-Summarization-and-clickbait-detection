@@ -5,11 +5,10 @@ from src.summarization_model import summarize_text
 import sys
 import os
 
+# Fix path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# ---------------------------
-# Load Models
-# ---------------------------
+# Load models
 click_model = pickle.load(open("models/clickbait/clickbait_model.pkl", "rb"))
 click_vectorizer = pickle.load(open("models/clickbait/vectorizer.pkl", "rb"))
 sum_vectorizer = pickle.load(open("models/summarization/vectorizer.pkl", "rb"))
@@ -30,11 +29,10 @@ def predict_clickbait(text):
 st.set_page_config(page_title="News AI System", layout="wide")
 
 # ---------------------------
-# Dark Mode Toggle (UI only)
+# Dark Mode Toggle
 # ---------------------------
-dark_mode = st.toggle("Dark Mode")
+dark_mode = st.toggle("🌙 Dark Mode")
 
-# Simple color adaptation (no breaking layout)
 if dark_mode:
     bg = "#0f172a"
     card_bg = "#1e293b"
@@ -45,7 +43,7 @@ else:
     text = "#1f2937"
 
 # ---------------------------
-# CSS (SAFE + RESPONSIVE)
+# CSS
 # ---------------------------
 st.markdown(f"""
 <style>
@@ -88,59 +86,86 @@ body {{
 st.title("News Summarization & Clickbait Detection")
 
 # ---------------------------
-# Input Section
+# Session State
 # ---------------------------
-with st.container():
+if "example_text" not in st.session_state:
+    st.session_state.example_text = ""
+
+# ---------------------------
+# Tabs
+# ---------------------------
+tab1, tab2 = st.tabs([" Analyze", "Examples"])
+
+# ---------------------------
+# TAB 1: ANALYZE
+# ---------------------------
+with tab1:
+
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    user_input = st.text_area("Enter News Article or Headline", height=150)
+
+    user_input = st.text_area(
+        "Enter News Article or Headline",
+        value=st.session_state.example_text,
+        height=150,
+        placeholder="Type or paste news content here..."
+    )
+
+    analyze_btn = st.button(" Analyze")
+
     st.markdown('</div>', unsafe_allow_html=True)
 
+    if analyze_btn:
+
+        if user_input.strip() == "":
+            st.warning("Please enter some text")
+        else:
+            with st.spinner("Processing..."):
+
+                clean_input = clean_text(user_input)
+                label, confidence = predict_clickbait(clean_input)
+
+                color = "red" if label == "Clickbait" else "green"
+
+                col1, col2 = st.columns([1, 1])
+
+                # LEFT: Clickbait
+                with col1:
+                    st.markdown('<div class="card">', unsafe_allow_html=True)
+                    st.markdown('<div class="section-title">Clickbait Detection</div>', unsafe_allow_html=True)
+
+                    st.markdown(f"### :{color}[{label}]")
+                    st.progress(float(confidence))
+                    st.write(f"Confidence: {confidence*100:.2f}%")
+
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+                # RIGHT: Summary
+                with col2:
+                    summary = summarize_text(user_input, sum_vectorizer)
+
+                    st.markdown('<div class="card">', unsafe_allow_html=True)
+                    st.markdown('<div class="section-title">Summary</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="summary-box">{summary}</div>', unsafe_allow_html=True)
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+        # Reset example after use
+        st.session_state.example_text = ""
+
 # ---------------------------
-# Analyze Button
+# TAB 2: EXAMPLES
 # ---------------------------
-if st.button("Analyze"):
+with tab2:
 
-    if user_input.strip() == "":
-        st.warning("Please enter some text")
-    else:
-        with st.spinner("Processing..."):
+    st.subheader(" Try Example Inputs")
 
-            clean_input = clean_text(user_input)
-            label, confidence = predict_clickbait(clean_input)
+    examples = {
+        " Clickbait Example": "You won't believe what this politician said next!",
+        " Normal News": "Government announces new policy to improve education system.",
+        " Tech News": "Apple releases new AI-powered features in latest iOS update.",
+        " Entertainment": "New movie breaks box office records worldwide."
+    }
 
-            # Dynamic color
-            if label == "Clickbait":
-                color = "red"
-            else:
-                color = "green"
-
-            # ---------------------------
-            # Responsive Columns
-            # ---------------------------
-            col1, col2 = st.columns([1, 1])
-
-            # ---------------------------
-            # LEFT: Clickbait Detection
-            # ---------------------------
-            with col1:
-                st.markdown('<div class="card">', unsafe_allow_html=True)
-                st.markdown('<div class="section-title">Clickbait Detection</div>', unsafe_allow_html=True)
-
-                st.markdown(f"### :{color}[{label}]")
-
-                # Clean progress bar (colored)
-                st.progress(confidence)
-
-                st.write(f"Confidence: {confidence*100:.2f}%")
-                st.markdown('</div>', unsafe_allow_html=True)
-
-            # ---------------------------
-            # RIGHT: Summary
-            # ---------------------------
-            with col2:
-                summary = summarize_text(user_input, sum_vectorizer)
-
-                st.markdown('<div class="card">', unsafe_allow_html=True)
-                st.markdown('<div class="section-title">Summary</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="summary-box">{summary}</div>', unsafe_allow_html=True)
-                st.markdown('</div>', unsafe_allow_html=True)
+    for title, text in examples.items():
+        if st.button(title):
+            st.session_state.example_text = text
+            st.success("Example loaded! Go to 'Analyze' tab ")
