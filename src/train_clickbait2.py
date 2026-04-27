@@ -31,19 +31,22 @@ class EarlyStopping:
     def __call__(self, val_loss):
         if self.best_loss is None:
             self.best_loss = val_loss
-            return True   # >>> CHANGED (return flag to save best model)
+            return True
 
         if self.best_loss - val_loss > self.min_delta:
             self.best_loss = val_loss
             self.counter = 0
-            return True   # >>> CHANGED
+            return True
         else:
             self.counter += 1
             if self.counter >= self.patience:
                 self.early_stop = True
-            return False  # >>> CHANGED
+            return False
 
 
+# ─────────────────────────────────────────────
+# CLEAN TEXT
+# ─────────────────────────────────────────────
 def clean_text(text):
     text = str(text).lower()
     text = re.sub(r"http\S+|www\S+|https\S+", "", text)
@@ -54,6 +57,9 @@ def clean_text(text):
     return text
 
 
+# ─────────────────────────────────────────────
+# TRAIN FUNCTION
+# ─────────────────────────────────────────────
 def train():
 
     # Load datasets
@@ -76,9 +82,7 @@ def train():
     print("Label distribution:")
     print(df["label"].value_counts())
 
-    # ── PROPER 3-WAY SPLIT ──────────────────────
-    # >>> NEW (instead of single train_test_split)
-
+    # ── SPLIT ─────────────────────────────
     X_train, X_temp, y_train, y_temp = train_test_split(
         df["title"], df["label"],
         test_size=0.3,
@@ -93,7 +97,7 @@ def train():
         stratify=y_temp
     )
 
-    # ── VOCAB (ONLY FROM TRAIN) ────────────────
+    # ── VOCAB ─────────────────────────────
     counter = Counter(" ".join(X_train).split())
 
     vocab = {"<PAD>": 0, "<UNK>": 1}
@@ -106,26 +110,26 @@ def train():
         ids = [vocab.get(t, 1) for t in tokens]
         return ids + [0] * (max_len - len(ids))
 
-    # Encode datasets
+    # Encode
     X_train_enc = torch.tensor([encode(t) for t in X_train])
-
-    X_val_enc = torch.tensor([encode(t) for t in X_val])   # >>> NEW
-    X_test_enc = torch.tensor([encode(t) for t in X_test]) # >>> NEW
+    X_val_enc = torch.tensor([encode(t) for t in X_val])
+    X_test_enc = torch.tensor([encode(t) for t in X_test])
 
     y_train = torch.tensor(y_train.values, dtype=torch.float)
-
-    y_val = torch.tensor(y_val.values, dtype=torch.float)  # >>> NEW
-    y_test = torch.tensor(y_test.values, dtype=torch.float) # >>> NEW
+    y_val = torch.tensor(y_val.values, dtype=torch.float)
+    y_test = torch.tensor(y_test.values, dtype=torch.float)
 
     # DataLoader
-    train_dataset = TensorDataset(X_train_enc, y_train)
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    train_loader = DataLoader(
+        TensorDataset(X_train_enc, y_train),
+        batch_size=32,
+        shuffle=True
+    )
 
-    # ── MODEL ──────────────────────────────────
+    # ── MODEL ─────────────────────────────
     model = ClickbaitLSTM(len(vocab), 64, 128).to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-    # Class weighting
     pos_weight = torch.tensor([
         len(y_train[y_train == 0]) / max(len(y_train[y_train == 1]), 1)
     ]).to(DEVICE)
@@ -134,10 +138,10 @@ def train():
 
     early_stopping = EarlyStopping(patience=3)
 
-    best_model_path = "models/clickbait/best_lstm.pt"  # >>> NEW
     os.makedirs("models/clickbait", exist_ok=True)
+    best_model_path = "models/clickbait/best_lstm1.pt"
 
-    # ── TRAINING LOOP ──────────────────────────
+    # ── TRAINING ───────────────────────────
     for epoch in range(5):
 
         model.train()
@@ -155,52 +159,63 @@ def train():
 
             total_loss += loss.item()
 
-        # ── VALIDATION ─────────────────────────
+        # validation
         model.eval()
         with torch.no_grad():
-
-            # >>> CHANGED (previously used X_test → DATA LEAK)
             val_outputs = model(X_val_enc.to(DEVICE))
             val_loss = criterion(val_outputs, y_val.to(DEVICE)).item()
 
         print(f"Epoch {epoch+1} | Train Loss: {total_loss/len(train_loader):.4f} | Val Loss: {val_loss:.4f}")
 
-        # >>> NEW (save best model)
         if early_stopping(val_loss):
             torch.save(model.state_dict(), best_model_path)
 
         if early_stopping.early_stop:
-            print(f"\n⛔ Early stopping at epoch {epoch+1}")
+            print("Early stopping triggered")
             break
 
-    # ── LOAD BEST MODEL ───────────────────────
-    model.load_state_dict(torch.load(best_model_path))  # >>> NEW
+    # ── LOAD BEST MODEL ────────────────────
+    model.load_state_dict(torch.load(best_model_path))
+    model.eval()
 
-    # ── FINAL EVALUATION (TEST ONLY ONCE) ─────
+    # ── FINAL TEST EVALUATION ──────────────
     print("\nEvaluating on TEST set...\n")
 
-    model.eval()
     with torch.no_grad():
         outputs = model(X_test_enc.to(DEVICE))
-        probs = torch.sigmoid(outputs).cpu().numpy()
+
+        probs = torch.sigmoid(outputs).cpu().numpy().flatten()
         preds = (probs >= 0.5).astype(int)
 
     y_true = y_test.numpy()
+
+    clickbait_prob = probs
+    non_clickbait_prob = 1 - probs
 
     print("Accuracy:", accuracy_score(y_true, preds))
     print("\nClassification Report:")
     print(classification_report(y_true, preds))
 
-    # ── SAVE FINAL FILES ──────────────────────
-    torch.save(model.state_dict(), "models/clickbait/lstm_model.pt")
+    print("\nSample Predictions:\n")
 
-    with open("models/clickbait/vocab.pkl", "wb") as f:
+    for i in range(5):
+        print(f"Sample {i+1}")
+        print("Clickbait Prob:", clickbait_prob[i])
+        print("Not Clickbait Prob:", non_clickbait_prob[i])
+        print("Pred:", preds[i])
+        print("True:", y_true[i])
+        print("-" * 30)
+
+    # ── SAVE FILES (MATCH UI) ──────────────
+    torch.save(model.state_dict(), "models/clickbait/best1_lstm.pt")
+
+    with open("models/clickbait/vocab1.pkl", "wb") as f:
         pickle.dump(vocab, f)
 
-    with open("models/clickbait/lstm_config.pkl", "wb") as f:
+    with open("models/clickbait/lstm_config1.pkl", "wb") as f:
         pickle.dump({"max_len": 20}, f)
 
-    print("\n✅ Training complete and model saved!")
+    print("\n Training complete and model saved!")
 
 
 if __name__ == "__main__":
