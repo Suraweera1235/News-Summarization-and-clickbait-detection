@@ -11,6 +11,17 @@ def clean_text(text):
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
+def load_summarization_data(train_path, val_path, test_path):
+    train_df = pd.read_csv(train_path)
+    val_df = pd.read_csv(val_path)
+    test_df = pd.read_csv(test_path)
+
+    for df in [train_df, val_df, test_df]:
+        df['clean_article'] = df['article'].astype(str).apply(clean_text)
+        df['clean_summary'] = df['highlights'].astype(str).apply(clean_text)
+
+    return train_df, val_df, test_df
+
 def train_summarizer():
     df = pd.read_csv("Data/Summ/train.csv")
 

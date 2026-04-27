@@ -1,7 +1,7 @@
 import torch
 import evaluate
 from transformers import BartTokenizer, BartForConditionalGeneration
-from preprocessing import load_summarization_data
+from src.summarization_model import load_summarization_data
 from tqdm import tqdm
 
 rouge = evaluate.load("rouge")
