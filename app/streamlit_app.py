@@ -1,171 +1,135 @@
 import streamlit as st
+import torch
 import pickle
-from src.preprocessing import clean_text
-from src.summarization_model import summarize_text
-import sys
+import re
 import os
+import sys
 
-# Fix path
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+
+
+from src.clickbait_lstm import ClickbaitLSTM
+
+# ─────────────────────────────────────────────
+# PATH FIX
+# ─────────────────────────────────────────────
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Load models
-click_model = pickle.load(open("models/clickbait/clickbait_model.pkl", "rb"))
-click_vectorizer = pickle.load(open("models/clickbait/vectorizer.pkl", "rb"))
-sum_vectorizer = pickle.load(open("models/summarization/vectorizer.pkl", "rb"))
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ---------------------------
-# Clickbait Prediction
-# ---------------------------
+# ─────────────────────────────────────────────
+# MODELS
+# ─────────────────────────────────────────────
+
+# Clickbait model (PyTorch)
+click_model = ClickbaitLSTM(0, 64, 128)  # placeholder, will be overwritten
+
+click_model.load_state_dict(
+    torch.load("models/clickbait/lstm_model.pt", map_location=DEVICE)
+)
+click_model.to(DEVICE)
+click_model.eval()
+
+with open("models/clickbait/vocab.pkl", "rb") as f:
+    vocab = pickle.load(f)
+
+# ─────────────────────────────────────────────
+# SUMMARIZATION MODEL (PRETRAINED BART) ⭐
+# ─────────────────────────────────────────────
+SUM_MODEL = "facebook/bart-large-cnn"
+
+sum_tokenizer = AutoTokenizer.from_pretrained(SUM_MODEL)
+sum_model = AutoModelForSeq2SeqLM.from_pretrained(SUM_MODEL).to(DEVICE)
+
+
+# ─────────────────────────────────────────────
+# CLICKBAIT PREDICTION
+# ─────────────────────────────────────────────
+def encode(text, max_len=20):
+    tokens = text.split()[:max_len]
+    ids = [vocab.get(t, 1) for t in tokens]
+    return ids + [0] * (max_len - len(ids))
+
+
 def predict_clickbait(text):
-    vec = click_vectorizer.transform([text])
-    pred = click_model.predict(vec)[0]
-    prob = click_model.predict_proba(vec)[0]
-    confidence = max(prob)
-    return ("Clickbait", confidence) if pred == 1 else ("Not Clickbait", confidence)
+    vec = torch.tensor([encode(text)]).to(DEVICE)
 
-# ---------------------------
-# Page Config
-# ---------------------------
+    with torch.no_grad():
+        output = click_model(vec)
+        prob = torch.sigmoid(output).item()
+
+    label = "Clickbait" if prob >= 0.5 else "Not Clickbait"
+    return label, prob
+
+
+# ─────────────────────────────────────────────
+# SUMMARIZATION FUNCTION (BART)
+# ─────────────────────────────────────────────
+def summarize_text(text):
+
+    text = text[:1024]  # safety limit
+
+    inputs = sum_tokenizer(
+        text,
+        return_tensors="pt",
+        truncation=True,
+        padding=True
+    ).to(DEVICE)
+
+    with torch.no_grad():
+        outputs = sum_model.generate(
+            **inputs,
+            max_length=120,
+            min_length=30,
+            num_beams=4,
+            length_penalty=1.2
+        )
+
+    return sum_tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+
+# ─────────────────────────────────────────────
+# UI CONFIG
+# ─────────────────────────────────────────────
 st.set_page_config(page_title="News AI System", layout="wide")
 
-# ---------------------------
-# Dark Mode Toggle
-# ---------------------------
+st.title("📰 News Summarization & Clickbait Detection")
+
+# ─────────────────────────────────────────────
+# DARK MODE (OPTIONAL UI ONLY)
+# ─────────────────────────────────────────────
 dark_mode = st.toggle("🌙 Dark Mode")
 
-if dark_mode:
-    bg = "#0f172a"
-    card_bg = "#1e293b"
-    text = "#e2e8f0"
-else:
-    bg = "#f5f7fa"
-    card_bg = "#ffffff"
-    text = "#1f2937"
 
-# ---------------------------
-# CSS
-# ---------------------------
-st.markdown(f"""
-<style>
-.block-container {{
-    padding-top: 2rem;
-}}
+# ─────────────────────────────────────────────
+# INPUT
+# ─────────────────────────────────────────────
+user_input = st.text_area("Enter News Article or Headline", height=180)
 
-body {{
-    background-color: {bg};
-    color: {text};
-}}
+if st.button("Analyze"):
 
-.card {{
-    background-color: {card_bg};
-    padding: 15px;
-    border-radius: 8px;
-    border: 1px solid #e5e7eb;
-    margin-bottom: 15px;
-}}
+    if user_input.strip() == "":
+        st.warning("Please enter text")
+    else:
 
-.section-title {{
-    font-weight: 600;
-    margin-bottom: 8px;
-    border-bottom: 1px solid #e5e7eb;
-    padding-bottom: 4px;
-}}
+        clean_input = clean_text(user_input)
 
-.summary-box {{
-    padding: 10px;
-    border-radius: 6px;
-    border-left: 3px solid #6366f1;
-    line-height: 1.5;
-}}
-</style>
-""", unsafe_allow_html=True)
+        # ── CLICKBAIT ──
+        label, prob = predict_clickbait(clean_input)
 
-# ---------------------------
-# Title
-# ---------------------------
-st.title("News Summarization & Clickbait Detection")
+        # ── SUMMARY ──
+        summary = summarize_text(user_input)
 
-# ---------------------------
-# Session State
-# ---------------------------
-if "example_text" not in st.session_state:
-    st.session_state.example_text = ""
+        col1, col2 = st.columns(2)
 
-# ---------------------------
-# Tabs
-# ---------------------------
-tab1, tab2 = st.tabs([" Analyze", "Examples"])
+        with col1:
+            st.subheader("Clickbait Detection")
 
-# ---------------------------
-# TAB 1: ANALYZE
-# ---------------------------
-with tab1:
+            st.metric("Result", label)
+            st.progress(float(prob))
+            st.write(f"Confidence: {prob:.2f}")
 
-    st.markdown('<div class="card">', unsafe_allow_html=True)
+        with col2:
+            st.subheader("Summary")
 
-    user_input = st.text_area(
-        "Enter News Article or Headline",
-        value=st.session_state.example_text,
-        height=150,
-        placeholder="Type or paste news content here..."
-    )
-
-    analyze_btn = st.button(" Analyze")
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    if analyze_btn:
-
-        if user_input.strip() == "":
-            st.warning("Please enter some text")
-        else:
-            with st.spinner("Processing..."):
-
-                clean_input = clean_text(user_input)
-                label, confidence = predict_clickbait(clean_input)
-
-                color = "red" if label == "Clickbait" else "green"
-
-                col1, col2 = st.columns([1, 1])
-
-                # LEFT: Clickbait
-                with col1:
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    st.markdown('<div class="section-title">Clickbait Detection</div>', unsafe_allow_html=True)
-
-                    st.markdown(f"### :{color}[{label}]")
-                    st.progress(float(confidence))
-                    st.write(f"Confidence: {confidence*100:.2f}%")
-
-                    st.markdown('</div>', unsafe_allow_html=True)
-
-                # RIGHT: Summary
-                with col2:
-                    summary = summarize_text(user_input, sum_vectorizer)
-
-                    st.markdown('<div class="card">', unsafe_allow_html=True)
-                    st.markdown('<div class="section-title">Summary</div>', unsafe_allow_html=True)
-                    st.markdown(f'<div class="summary-box">{summary}</div>', unsafe_allow_html=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
-
-        # Reset example after use
-        st.session_state.example_text = ""
-
-# ---------------------------
-# TAB 2: EXAMPLES
-# ---------------------------
-with tab2:
-
-    st.subheader(" Try Example Inputs")
-
-    examples = {
-        " Clickbait Example": "You won't believe what this politician said next!",
-        " Normal News": "Government announces new policy to improve education system.",
-        " Tech News": "Apple releases new AI-powered features in latest iOS update.",
-        " Entertainment": "New movie breaks box office records worldwide."
-    }
-
-    for title, text in examples.items():
-        if st.button(title):
-            st.session_state.example_text = text
-            st.success("Example loaded! Go to 'Analyze' tab ")
+            st.success(summary)
