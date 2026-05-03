@@ -20,7 +20,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # CLEAN TEXT
 # ─────────────────────────────────────────────
 def clean_text(text):
-    text = str(text).lower()
     text = re.sub(r'http\S+|www\S+', '', text)
     text = re.sub(r'[^a-zA-Z. ]', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
@@ -103,7 +102,8 @@ print(f"ROUGE-L: {results['rougeL']:.4f}")
 # ─────────────────────────────────────────────
 os.makedirs("results", exist_ok=True)
 
+import json
 with open("results/rouge_scores.txt", "w") as f:
-    f.write(str(results))
+    json.dump({k: float(v) for k, v in results.items()}, f, indent=2)
 
 print("\n✅ Evaluation complete. Results saved.")

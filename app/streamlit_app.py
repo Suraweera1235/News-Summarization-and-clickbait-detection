@@ -24,7 +24,6 @@ SUM_MODEL_NAME = "t5-small"
 # CLEAN TEXT
 # ─────────────────────────────
 def clean_text(text):
-    text = str(text).lower()
     text = re.sub(r"http\S+|www\S+|https\S+", "", text)
     text = re.sub(r"<.*?>", "", text)
     text = text.translate(str.maketrans("", "", string.punctuation))
